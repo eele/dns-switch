@@ -40,6 +40,13 @@
   --radius-card: 6px;
   --radius-control: 5px;
   --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.12);
+  /* Drop shadow drawn *outside* the window edge, inside the transparent
+     margin (24px) of the frameless transparent BrowserWindow. Keep the
+     shadow extent (offset + blur ≤ 24) within that margin, and keep the
+     BrowserWindow size in sync (content + 2×24px, see electron/main.cjs). */
+  --window-shadow: 0 6px 18px rgba(0, 0, 0, 0.35),
+    0 2px 6px rgba(0, 0, 0, 0.20);
+  --window-margin: 24px;
 
   /* Type */
   --font-main: "Lucida Grande", -apple-system, "Segoe UI", "Helvetica Neue",
@@ -70,15 +77,19 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* ─── Window root (Aqua rounded window) ─────────────────────── */
+/* ─── Window root (Aqua rounded window) ───────────────────────
+   Inset from the transparent window edge by --window-margin so the outer
+   drop shadow renders *outside* the visible window, in the window's
+   transparent margin. */
 #root {
-  width: 100%;
-  height: 100vh;
+  position: absolute;
+  inset: var(--window-margin);
   display: flex;
   flex-direction: column;
   background: var(--bg-window);
   border-radius: var(--radius-window);
   overflow: hidden;
+  box-shadow: var(--window-shadow);
 }
 
 /* ─── Content area ──────────────────────────────────────────── */

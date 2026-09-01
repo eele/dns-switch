@@ -9,12 +9,18 @@ if (process.env.DNS_SWITCH_E2E === "1") {
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
 
+// The visible window content is 580×480; the BrowserWindow is enlarged by
+// 24px per side (see --window-margin in src/theme.css) so the outer drop
+// shadow of #root can render in the transparent margin without being
+// clipped at the window boundary.
+const WINDOW_MARGIN = 24;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 580,
-    height: 480,
-    minWidth: 420,
-    minHeight: 360,
+    width: 580 + WINDOW_MARGIN * 2,
+    height: 480 + WINDOW_MARGIN * 2,
+    minWidth: 420 + WINDOW_MARGIN * 2,
+    minHeight: 360 + WINDOW_MARGIN * 2,
     frame: false,
     title: "DNS Switch",
     transparent: true,
