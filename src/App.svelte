@@ -213,6 +213,8 @@
 
   // ── Context menu ───────────────────────────────────────────
   function onContext(e: MouseEvent, addr: string, addrId: string) {
+    e.preventDefault();
+    e.stopPropagation();
     ctxX = e.clientX;
     ctxY = e.clientY;
     ctxAddress = addr;
@@ -299,8 +301,22 @@
       {#if currentDns.isDhcp || (!currentDns.primary && !currentDns.secondary)}
         <span class="addr-dhcp" data-testid="current-dns">Automatic (DHCP)</span>
       {:else}
-        <span class="addr" data-testid="current-dns">
-          {currentDns.primary}  /  {currentDns.secondary}
+        <!-- Each address is individually copyable via the right-click
+             context menu; the wrapper keeps the "current-dns" test id. -->
+        <span class="current-dns-addr" data-testid="current-dns">
+          <span
+            class="addr"
+            data-testid="current-dns-primary"
+            oncontextmenu={(e) => onContext(e, currentDns.primary, "current-primary")}
+            >{currentDns.primary}</span
+          >
+          <span class="addr-sep" aria-hidden="true">/</span>
+          <span
+            class="addr"
+            data-testid="current-dns-secondary"
+            oncontextmenu={(e) => onContext(e, currentDns.secondary, "current-secondary")}
+            >{currentDns.secondary}</span
+          >
         </span>
       {/if}
     </div>

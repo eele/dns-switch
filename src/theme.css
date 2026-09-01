@@ -183,6 +183,15 @@ body {
   font-size: var(--font-size-body);
 }
 
+/* separator between the two copyable current-DNS addresses */
+.addr-sep {
+  color: var(--text-secondary);
+  font-family: var(--font-main);
+  font-size: 12px;
+  margin: 0 4px;
+  user-select: none;
+}
+
 /* ─── DNS Group Rows ────────────────────────────────────────── */
 .dns-list {
   display: flex;
