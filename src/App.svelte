@@ -222,6 +222,25 @@
     ctxVisible = true;
   }
 
+  // Right-click handler for the whole Current DNS value. It is attached to the
+  // wrapper so right-clicking anywhere in the value (either address, the "/"
+  // separator, or the gaps between them — e.g. after selecting the full
+  // "primary / secondary" string) opens the copy menu. The target address is
+  // derived from which element the cursor is over; gaps/separator fall back to
+  // the primary address.
+  function onCurrentDnsContext(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.target as Element;
+    const isSecondary =
+      target.closest('[data-testid="current-dns-secondary"]') !== null;
+    ctxX = e.clientX;
+    ctxY = e.clientY;
+    ctxAddress = isSecondary ? currentDns.secondary : currentDns.primary;
+    ctxAddrId = isSecondary ? "current-secondary" : "current-primary";
+    ctxVisible = true;
+  }
+
   function onCopy(full: boolean) {
     const text = full ? ctxAddress : (window.getSelection()?.toString() || ctxAddress);
     if (navigator.clipboard?.writeText) {
@@ -301,20 +320,19 @@
       {#if currentDns.isDhcp || (!currentDns.primary && !currentDns.secondary)}
         <span class="addr-dhcp" data-testid="current-dns">Automatic (DHCP)</span>
       {:else}
-        <!-- Each address is individually copyable via the right-click
-             context menu; the wrapper keeps the "current-dns" test id. -->
-        <span class="current-dns-addr" data-testid="current-dns">
-          <span
-            class="addr"
-            data-testid="current-dns-primary"
-            oncontextmenu={(e) => onContext(e, currentDns.primary, "current-primary")}
+        <!-- The wrapper handles right-clicks for the whole value so that the
+             separator/gaps between addresses (and a full text selection) still
+             open the copy menu; each address keeps its own test id. -->
+        <span
+          class="current-dns-addr"
+          data-testid="current-dns"
+          oncontextmenu={onCurrentDnsContext}
+        >
+          <span class="addr" data-testid="current-dns-primary"
             >{currentDns.primary}</span
           >
           <span class="addr-sep" aria-hidden="true">/</span>
-          <span
-            class="addr"
-            data-testid="current-dns-secondary"
-            oncontextmenu={(e) => onContext(e, currentDns.secondary, "current-secondary")}
+          <span class="addr" data-testid="current-dns-secondary"
             >{currentDns.secondary}</span
           >
         </span>
