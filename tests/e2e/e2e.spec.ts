@@ -164,10 +164,11 @@ test.describe("DNS Switch UI", () => {
 
     await expect(page.getByTestId("context-menu")).toBeVisible();
     await expect(page.getByTestId("ctx-copy")).toBeVisible();
-    await expect(page.getByTestId("ctx-copy-all")).toBeVisible();
+    // "Copy All" option has been removed
+    await expect(page.getByTestId("ctx-copy-all")).toHaveCount(0);
   });
 
-  test("context menu Copy writes to clipboard", async ({ page, context }) => {
+  test("context menu Copy copies the whole address when nothing is selected", async ({ page, context }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 
     const addr = page.getByTestId("addr-AliDNS-primary");
@@ -182,14 +183,35 @@ test.describe("DNS Switch UI", () => {
     expect(text).toBe("223.5.5.5");
   });
 
-  test("context menu Copy All copies full address", async ({ page, context }) => {
+  test("context menu Copy copies the selected text when text is selected", async ({ page, context }) => {
     await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 
-    const addr = page.getByTestId("addr-Google DNS-secondary");
-    await addr.click({ button: "right" });
-    await page.getByTestId("ctx-copy-all").click();
+    // Select part of the address text ("223.5" out of "223.5.5.5")
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="addr-AliDNS-primary"]');
+      const range = document.createRange();
+      range.setStart(el.firstChild, 0);
+      range.setEnd(el.firstChild, 5);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    });
 
-    await expect(page.getByTestId("status")).toContainText("Copied 8.8.4.4");
+    // Dispatch contextmenu directly so the selection is preserved
+    // (a real right-click would clear the selection)
+    await page.evaluate(() => {
+      const el = document.querySelector('[data-testid="addr-AliDNS-primary"]');
+      el.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 200, clientY: 200 }));
+    });
+
+    await page.getByTestId("ctx-copy").click();
+
+    await expect(page.getByTestId("context-menu")).not.toBeVisible();
+    await expect(page.getByTestId("status")).toContainText("Copied 223.5");
+
+    // Verify clipboard
+    const text = await page.evaluate(() => navigator.clipboard.readText());
+    expect(text).toBe("223.5");
   });
 
   // ── 10. Traffic light buttons ────────────────────────────

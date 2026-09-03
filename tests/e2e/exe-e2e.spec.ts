@@ -321,7 +321,7 @@ test("right-click on address shows context menu", async () => {
   await page.locator("[data-testid='addr-Google DNS-primary']").click({ button: "right" });
   await expect(page.locator("[data-testid='context-menu']")).toBeVisible();
   await expect(page.locator("[data-testid='ctx-copy']")).toBeVisible();
-  await expect(page.locator("[data-testid='ctx-copy-all']")).toBeVisible();
+  await expect(page.locator("[data-testid='ctx-copy-all']")).toHaveCount(0);
   // Dismiss the context menu by clicking on the status bar so it doesn't
   // interfere with the next test
   await page.locator("[data-testid='status']").click();

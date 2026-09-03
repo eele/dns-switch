@@ -32,6 +32,7 @@
   let ctxY = $state(0);
   let ctxAddress = $state("");
   let ctxAddrId = $state("");
+  let ctxSelection = $state("");
 
   // Confirm dialog state
   let confirmVisible = $state(false);
@@ -219,10 +220,12 @@
   function onContext(e: MouseEvent, addr: string, addrId: string) {
     e.preventDefault();
     e.stopPropagation();
+    const selected = window.getSelection()?.toString().trim() ?? "";
     ctxX = e.clientX;
     ctxY = e.clientY;
     ctxAddress = addr;
     ctxAddrId = addrId;
+    ctxSelection = selected;
     ctxVisible = true;
   }
 
@@ -238,15 +241,20 @@
     const target = e.target as Element;
     const isSecondary =
       target.closest('[data-testid="current-dns-secondary"]') !== null;
+    const selected = window.getSelection()?.toString().trim() ?? "";
     ctxX = e.clientX;
     ctxY = e.clientY;
-    ctxAddress = isSecondary ? currentDns.secondary : currentDns.primary;
+    ctxAddress = isSecondary && currentDns.secondary !== "" ? currentDns.secondary : currentDns.primary;
     ctxAddrId = isSecondary ? "current-secondary" : "current-primary";
+    ctxSelection = selected;
     ctxVisible = true;
   }
 
-  function onCopy(full: boolean) {
-    const text = full ? ctxAddress : (window.getSelection()?.toString() || ctxAddress);
+  /**
+   * Copy: 有刷选文字时复制刷选的文字；没有刷选时复制鼠标所在的整个 DNS 地址。
+   */
+  function onCopy() {
+    const text = ctxSelection !== "" ? ctxSelection : ctxAddress;
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(text).then(() => {
         setStatus(`Copied ${text}`, "success");
