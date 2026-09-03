@@ -80,9 +80,11 @@
   }
 
   async function loadDns() {
+    const adapter = adapters.find((a) => a.name === selectedAdapter);
+    if (!adapter) return;
     setStatus("Loading…", "loading");
     try {
-      const info = await getCurrentDns(selectedAdapter);
+      const info = await getCurrentDns(adapter.index);
       currentDns = info;
       // Determine which radio should be checked
       if (info.isDhcp || (!info.primary && !info.secondary)) {
@@ -120,10 +122,12 @@
   }
 
   async function onToggleGroup(name: string) {
+    const adapter = adapters.find((a) => a.name === selectedAdapter);
+    if (!adapter) return;
     if (name === "Automatic (DHCP)") {
       setStatus(`Applying DHCP to "${selectedAdapter}"…`, "loading");
       try {
-        await resetDnsToDhcp(selectedAdapter);
+        await resetDnsToDhcp(adapter.index);
         currentDns = { primary: "", secondary: "", isDhcp: true };
         selectedGroup = "Automatic (DHCP)";
         setStatus(`DNS on "${selectedAdapter}" reset to DHCP.`, "success");
@@ -138,7 +142,7 @@
 
     setStatus(`Applying "${name}" to "${selectedAdapter}"…`, "loading");
     try {
-      await setDns(selectedAdapter, [group.primary, group.secondary]);
+      await setDns(adapter.index, [group.primary, group.secondary]);
       currentDns = { primary: group.primary, secondary: group.secondary, isDhcp: false };
       selectedGroup = name;
       setStatus(`DNS on "${selectedAdapter}" updated successfully.`, "success");

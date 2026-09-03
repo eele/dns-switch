@@ -1,8 +1,20 @@
 import { test, expect, chromium, Browser } from "@playwright/test";
-import { spawn, ChildProcess } from "child_process";
+import { spawn, ChildProcess, execSync } from "child_process";
 import { existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+
+/**
+ * E2E tests against the packaged DNS-Switch.exe.
+ *
+ * The app now reads REAL system network adapters and real current DNS via
+ * PowerShell, so the assertions below are computed from the live system
+ * (Get-NetAdapter / Get-DnsClientServerAddress) instead of hardcoded mocks.
+ *
+ * Tests that mutate the system DNS (apply a group / reset to DHCP) require
+ * an elevated process; they are skipped when the test runner is not
+ * administrator.
+ */
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(currentDir, "..", "..");
@@ -10,9 +22,53 @@ const EXE_PATH = join(PROJECT_ROOT, "release", "DNS-Switch-win32-x64", "DNS-Swit
 const CDP_PORT = 9333;
 const CDP_URL = `http://127.0.0.1:${CDP_PORT}`;
 
+// ── Real-system helpers (mirror electron/dns-core.cjs) ────────
+function runPs(cmd: string): string {
+  return execSync(
+    `powershell -NoProfile -NonInteractive -Command "${cmd}"`,
+    { encoding: "utf8", timeout: 30000, windowsHide: true }
+  );
+}
+
+function getRealAdapters(): { name: string; index: number }[] {
+  const out = runPs(
+    "Get-NetAdapter | Where-Object Status -eq 'Up' | Select-Object Name,InterfaceIndex | ConvertTo-Json"
+  ).trim();
+  if (!out) return [];
+  const data = JSON.parse(out);
+  const arr = Array.isArray(data) ? data : [data];
+  return arr.map((a: any) => ({ name: String(a.Name), index: Number(a.InterfaceIndex) }));
+}
+
+function getRealDns(adapterIndex: number): string[] {
+  const out = runPs(
+    `Get-DnsClientServerAddress -InterfaceIndex ${adapterIndex} -AddressFamily IPv4 | Select-Object -Property ServerAddresses | ConvertTo-Json`
+  ).trim();
+  if (!out) return [];
+  const data = JSON.parse(out);
+  const rows = Array.isArray(data) ? data : [data];
+  return rows.flatMap((r: any) =>
+    Array.isArray(r?.ServerAddresses) ? r.ServerAddresses.filter(Boolean) : []
+  );
+}
+
+function isElevated(): boolean {
+  try {
+    const out = runPs(
+      "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"
+    ).trim();
+    return out === "True";
+  } catch {
+    return false;
+  }
+}
+
 let appProcess: ChildProcess;
 let browser: Browser;
 let page: any;
+let ELEVATED = false;
+/** Adapter names as seen by the app at launch (re-fetched on refresh). */
+let realAdapterNames: string[] = [];
 
 test.beforeAll(async () => {
   test.skip(!existsSync(EXE_PATH), `Exe not found at ${EXE_PATH}`);
@@ -49,8 +105,11 @@ test.beforeAll(async () => {
   await page.waitForSelector("[data-testid='status']", { timeout: 10000 });
   await page.waitForFunction(
     () => !document.querySelector("[data-testid='status']")?.textContent?.includes("Loading"),
-    { timeout: 10000 }
+    { timeout: 30000 }
   );
+
+  ELEVATED = isElevated();
+  realAdapterNames = getRealAdapters().map((a) => a.name);
 });
 
 test.afterAll(async () => {
@@ -64,6 +123,26 @@ test.afterAll(async () => {
   }
 });
 
+// Re-sync expected adapter names from the live system (retry a few times in
+// case the adapter set changed between the app's load and this check).
+async function expectRealAdapterList() {
+  const select = page.locator("[data-testid='adapter-select']");
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const options = await select.locator("option").allTextContents();
+    const expected = getRealAdapters().map((a) => a.name);
+    if (options.length === expected.length && options.every((o) => expected.includes(o))) {
+      realAdapterNames = options;
+      return;
+    }
+    // refresh the app's list and try again
+    await page.locator("[data-testid='btn-refresh']").click();
+    await expect(page.locator("[data-testid='status']")).toContainText("refreshed", { timeout: 15000 });
+  }
+  const options = await select.locator("option").allTextContents();
+  expect(options).toEqual(getRealAdapters().map((a) => a.name));
+}
+
+// ── 1. Rendering ───────────────────────────────────────────────
 test("app window renders with correct title", async () => {
   await expect(page.locator("[data-testid='title-bar']")).toBeVisible();
   await expect(page.locator(".title-bar-title")).toHaveText("DNS Switch");
@@ -75,18 +154,62 @@ test("traffic light buttons are present", async () => {
   await expect(page.locator("[data-testid='btn-maximize']")).toBeVisible();
 });
 
-test("adapter dropdown shows mock adapters", async () => {
-  const select = page.locator("[data-testid='adapter-select']");
-  await expect(select).toBeVisible();
-  const options = await select.locator("option").allTextContents();
-  expect(options).toContain("WLAN");
-  expect(options).toContain("Ethernet");
-  expect(options).toContain("Bluetooth Network");
+// ── 2. Real system data (the core of this change) ─────────────
+test("adapter dropdown lists the real system network adapters", async () => {
+  await expectRealAdapterList();
+  expect(realAdapterNames.length).toBeGreaterThanOrEqual(1);
+  // none of the old mock adapters may appear
+  for (const mockName of ["WLAN", "Bluetooth Network"]) {
+    expect(realAdapterNames, `mock adapter "${mockName}" must not be listed`).not.toContain(mockName);
+  }
 });
 
+test("Current DNS shows the real DNS of the selected adapter", async () => {
+  await expectRealAdapterList();
+  const realAdapters = getRealAdapters();
+  const select = page.locator("[data-testid='adapter-select']");
+  const currentDns = page.locator("[data-testid='current-dns']");
+
+  // Find an adapter that actually has IPv4 DNS servers; prefer it for a
+  // stronger assertion, fall back to any adapter (then expect Automatic).
+  const withDns = realAdapters.find((a) => getRealDns(a.index).length > 0);
+  const target = withDns ?? realAdapters[0];
+
+  await select.selectOption(target.name);
+
+  const servers = getRealDns(target.index);
+  if (servers.length > 0) {
+    await expect(currentDns).toContainText(servers[0], { timeout: 30000 });
+    if (servers.length > 1) {
+      await expect(currentDns).toContainText(servers[1], { timeout: 5000 });
+    }
+  } else {
+    await expect(currentDns).toContainText("Automatic (DHCP)", { timeout: 30000 });
+  }
+});
+
+test("switching to another real adapter shows that adapter's real DNS", async () => {
+  const realAdapters = getRealAdapters();
+  test.skip(realAdapters.length < 2, "need at least two Up adapters");
+
+  const first = realAdapters[0];
+  const second = realAdapters.find((a) => a.name !== first.name)!;
+  const select = page.locator("[data-testid='adapter-select']");
+
+  await select.selectOption(second.name);
+  const currentDns = page.locator("[data-testid='current-dns']");
+  const servers = getRealDns(second.index);
+  if (servers.length > 0) {
+    await expect(currentDns).toContainText(servers[0], { timeout: 30000 });
+  } else {
+    await expect(currentDns).toContainText("Automatic (DHCP)", { timeout: 30000 });
+  }
+});
+
+// ── 3. UI regression (adapter-independent) ────────────────────
 test("refresh button updates status", async () => {
   await page.locator("[data-testid='btn-refresh']").click();
-  await expect(page.locator("[data-testid='status']")).toContainText("refreshed", { timeout: 8000 });
+  await expect(page.locator("[data-testid='status']")).toContainText("refreshed", { timeout: 15000 });
 });
 
 test("DNS group rows are rendered", async () => {
@@ -96,18 +219,47 @@ test("DNS group rows are rendered", async () => {
   await expect(page.locator("[data-testid='row-Automatic (DHCP)']")).toBeVisible();
 });
 
-test("selecting a DNS group updates status and current DNS", async () => {
+// ── 4. Applying DNS (mutates the system; requires elevation) ──
+test("selecting a DNS group applies it to the selected adapter", async () => {
+  test.skip(!ELEVATED, "not running as administrator – real DNS change skipped");
+
   await page.locator("[data-testid='radio-Google DNS']").click();
-  await expect(page.locator("[data-testid='status']")).toContainText("updated successfully", { timeout: 8000 });
+  await expect(page.locator("[data-testid='status']")).toContainText("updated successfully", { timeout: 30000 });
   await expect(page.locator("[data-testid='current-dns']")).toContainText("8.8.8.8");
+  await expect(page.locator("[data-testid='radio-Google DNS']")).toBeChecked();
 });
 
-test("selecting DHCP resets DNS", async () => {
+test("selecting a DNS group without elevation fails gracefully", async () => {
+  test.skip(ELEVATED, "only relevant when NOT running as administrator");
+
+  const select = page.locator("[data-testid='adapter-select']");
+  const selected = await select.inputValue();
+  const real = getRealAdapters().find((a) => a.name === selected);
+  const before = getRealDns(real.index);
+  const expectedBefore = before.length > 0 ? before[0] : "Automatic (DHCP)";
+
+  await page.locator("[data-testid='radio-Google DNS']").click();
+  await expect(page.locator("[data-testid='status']")).toContainText("Failed to apply", { timeout: 30000 });
+  // current DNS display must still reflect the real (unchanged) system DNS
+  await expect(page.locator("[data-testid='current-dns']")).toContainText(expectedBefore, { timeout: 5000 });
+});
+
+test("selecting DHCP resets the adapter to automatic DNS", async () => {
+  test.skip(!ELEVATED, "not running as administrator – real DNS change skipped");
+
   await page.locator("[data-testid='radio-dhcp']").click();
-  await expect(page.locator("[data-testid='status']")).toContainText("reset to DHCP", { timeout: 8000 });
+  await expect(page.locator("[data-testid='status']")).toContainText("reset to DHCP", { timeout: 30000 });
   await expect(page.locator("[data-testid='current-dns']")).toContainText("Automatic (DHCP)");
 });
 
+test("selecting DHCP without elevation fails gracefully", async () => {
+  test.skip(ELEVATED, "only relevant when NOT running as administrator");
+
+  await page.locator("[data-testid='radio-dhcp']").click();
+  await expect(page.locator("[data-testid='status']")).toContainText("Failed to reset DNS", { timeout: 30000 });
+});
+
+// ── 5. Group management (in-memory UI state) ──────────────────
 test("edit and save a DNS group", async () => {
   await page.locator("[data-testid='btn-edit-AliDNS']").click();
   await expect(page.locator("[data-testid='edit-name-AliDNS']")).toBeVisible();
@@ -164,12 +316,14 @@ test("cancel delete keeps the group", async () => {
   await expect(page.locator("[data-testid='row-New Group']")).toBeVisible();
 });
 
+// ── 6. Context menu / copy ────────────────────────────────────
 test("right-click on address shows context menu", async () => {
-  await page.locator("[data-testid='addr-AliDNS-primary']").click({ button: "right" });
+  await page.locator("[data-testid='addr-Google DNS-primary']").click({ button: "right" });
   await expect(page.locator("[data-testid='context-menu']")).toBeVisible();
   await expect(page.locator("[data-testid='ctx-copy']")).toBeVisible();
   await expect(page.locator("[data-testid='ctx-copy-all']")).toBeVisible();
-  // Dismiss the context menu by clicking on the status bar so it doesn't interfere with next test
+  // Dismiss the context menu by clicking on the status bar so it doesn't
+  // interfere with the next test
   await page.locator("[data-testid='status']").click();
   await expect(page.locator("[data-testid='context-menu']")).not.toBeVisible();
 });

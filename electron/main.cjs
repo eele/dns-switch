@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain } = require("electron");
 const path = require("path");
+const dnsCore = require("./dns-core.cjs");
 
 let mainWindow;
 
@@ -58,4 +59,21 @@ ipcMain.handle("win:minimize", () => mainWindow?.minimize());
 ipcMain.handle("win:maximize", () => {
   if (!mainWindow) return;
   mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+});
+
+// ── IPC handlers for DNS operations (real system network adapters) ──
+ipcMain.handle("list_adapters", async () => {
+  return dnsCore.listAdapters();
+});
+
+ipcMain.handle("get_current_dns", async (event, adapterIndex) => {
+  return dnsCore.getCurrentDns(adapterIndex);
+});
+
+ipcMain.handle("set_dns", async (event, adapterIndex, servers) => {
+  await dnsCore.setDns(adapterIndex, servers);
+});
+
+ipcMain.handle("reset_dns_to_dhcp", async (event, adapterIndex) => {
+  await dnsCore.resetDnsToDhcp(adapterIndex);
 });
