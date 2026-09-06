@@ -98,12 +98,17 @@ pub fn list_adapters() -> Result<Vec<Adapter>, String> {
 /// `HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{GUID}`.
 /// The `NameServer` value is only present when DNS is configured statically, so
 /// its absence means the adapter is using DHCP (Automatic).
+///
+/// The GUID is obtained directly from `Get-NetAdapter -InterfaceIndex` which
+/// avoids the fragile name/IP matching that fails when the IP is DHCP and the
+/// registry key lacks a `Name` value.
 #[tauri::command]
 pub fn get_current_dns(adapter_index: u32) -> Result<DnsInfo, String> {
     let script = format!(
         r#"$nicIndex = {};
-$adapter = Get-NetAdapter -Index $nicIndex -ErrorAction SilentlyContinue;
+$adapter = Get-NetAdapter -InterfaceIndex $nicIndex -ErrorAction SilentlyContinue;
 $adapterName = $adapter.Name;
+$adapterGuid = $adapter.InterfaceGuid;
 $ipAddrs = @(Get-NetIPAddress -InterfaceIndex $nicIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress);
 
 $dnsServers = @();
@@ -115,21 +120,31 @@ foreach ($entry in $dnsEntries) {{
 }}
 
 $isDhcp = $true;
-$tcpIpBase = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces';
-$interfaceKeys = Get-ChildItem -Path $tcpIpBase -ErrorAction SilentlyContinue;
-foreach ($key in $interfaceKeys) {{
-  $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue;
-  $match = $false;
-  if ($adapterName -and $props.Name -eq $adapterName) {{ $match = $true }}
-  if (-not $match) {{
-    $keyIps = @();
-    if ($props.IPAddress) {{ $keyIps = @($props.IPAddress) }}
-    foreach ($ip in $keyIps) {{ if ($ipAddrs -contains $ip) {{ $match = $true; break }} }}
+$regHit = $false;
+if ($adapterGuid) {{
+  $regPath = "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$adapterGuid";
+  $props = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue;
+  if ($props) {{
+    $regHit = $true;
+    if ($props.NameServer) {{ $isDhcp = $false }}
   }}
-  if ($match) {{
-    $ns = $props.NameServer;
-    if ($ns -and $ns -ne "") {{ $isDhcp = $false }}
-    break;
+}}
+if (-not $regHit) {{
+  $tcpIpBase = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces';
+  $interfaceKeys = Get-ChildItem -Path $tcpIpBase -ErrorAction SilentlyContinue;
+  foreach ($key in $interfaceKeys) {{
+    $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue;
+    $match = $false;
+    if ($adapterName -and $props.Name -eq $adapterName) {{ $match = $true }}
+    if (-not $match) {{
+      $keyIps = @();
+      if ($props.IPAddress) {{ $keyIps = @($props.IPAddress) }}
+      foreach ($ip in $keyIps) {{ if ($ipAddrs -contains $ip) {{ $match = $true; break }} }}
+    }}
+    if ($match) {{
+      if ($props.NameServer) {{ $isDhcp = $false }}
+      break;
+    }}
   }}
 }}
 

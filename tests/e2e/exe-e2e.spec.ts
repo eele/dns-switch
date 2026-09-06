@@ -56,29 +56,42 @@ function getRealDns(adapterIndex: number): string[] {
  * Determine whether the adapter's DNS is set to "Automatic (DHCP)" by
  * checking the registry, mirroring the Rust backend logic.
  * A `NameServer` registry value means static DNS; its absence means DHCP.
+ * The registry key is located via the adapter's InterfaceGuid (authoritative);
+ * name/IP matching is kept only as a fallback when the GUID lookup misses.
  */
 function isRealDnsDhcp(adapterIndex: number): boolean {
   const cmd = `
 $nicIndex = ${adapterIndex};
-$adapter = Get-NetAdapter -Index $nicIndex -ErrorAction SilentlyContinue;
+$adapter = Get-NetAdapter -InterfaceIndex $nicIndex -ErrorAction SilentlyContinue;
 $adapterName = $adapter.Name;
+$adapterGuid = $adapter.InterfaceGuid;
 $ipAddrs = @(Get-NetIPAddress -InterfaceIndex $nicIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress);
 $isDhcp = $true;
-$tcpIpBase = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces';
-$interfaceKeys = Get-ChildItem -Path $tcpIpBase -ErrorAction SilentlyContinue;
-foreach ($key in $interfaceKeys) {
-  $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue;
-  $match = $false;
-  if ($adapterName -and $props.Name -eq $adapterName) { $match = $true }
-  if (-not $match) {
-    $keyIps = @();
-    if ($props.IPAddress) { $keyIps = @($props.IPAddress) }
-    foreach ($ip in $keyIps) { if ($ipAddrs -contains $ip) { $match = $true; break } }
+$regHit = $false;
+if ($adapterGuid) {
+  $regPath = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces\\$adapterGuid";
+  $props = Get-ItemProperty -Path $regPath -ErrorAction SilentlyContinue;
+  if ($props) {
+    $regHit = $true;
+    if ($props.NameServer) { $isDhcp = $false }
   }
-  if ($match) {
-    $ns = $props.NameServer;
-    if ($ns -and $ns -ne '') { $isDhcp = $false }
-    break;
+}
+if (-not $regHit) {
+  $tcpIpBase = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces';
+  $interfaceKeys = Get-ChildItem -Path $tcpIpBase -ErrorAction SilentlyContinue;
+  foreach ($key in $interfaceKeys) {
+    $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue;
+    $match = $false;
+    if ($adapterName -and $props.Name -eq $adapterName) { $match = $true }
+    if (-not $match) {
+      $keyIps = @();
+      if ($props.IPAddress) { $keyIps = @($props.IPAddress) }
+      foreach ($ip in $keyIps) { if ($ipAddrs -contains $ip) { $match = $true; break } }
+    }
+    if ($match) {
+      if ($props.NameServer) { $isDhcp = $false }
+      break;
+    }
   }
 }
 if ($isDhcp) { 'True' } else { 'False' }
