@@ -3,22 +3,24 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "electron/main.cjs",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "electron .",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "test:e2e": "playwright test -c tests/playwright.config.ts",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
-    "package:win": "npm run build && electron-packager . DNS-Switch --platform=win32 --arch=x64 --out=release --overwrite --ignore=tests --ignore=release --ignore=playwright-report --ignore=test-results --ignore=macos",
-    "package:win:e2e": "npm run build && electron-packager . DNS-Switch --platform=win32 --arch=x64 --out=release --overwrite --ignore=tests --ignore=release --ignore=playwright-report --ignore=test-results --ignore=macos"
+    "package:win": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@sveltejs/vite-plugin-svelte": "^4.0.4",
-    "electron": "^33.0.0",
-    "electron-packager": "^17.1.2",
+    "@tauri-apps/cli": "^2",
     "svelte": "^5.0.0",
     "svelte-check": "^3.8.0",
     "tslib": "^2.6.0",

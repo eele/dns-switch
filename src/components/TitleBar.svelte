@@ -1,37 +1,57 @@
 <script lang="ts">
+  import { getCurrentWindow } from "@tauri-apps/api/window";
+
   interface Props {
     title?: string;
   }
   let { title = "DNS Switch" }: Props = $props();
 
-  const api = (window as any).electronAPI;
-
   const handleClose = () => {
-    if (api?.windowClose) api.windowClose();
-    else window.close();
+    getCurrentWindow().close();
   };
   const handleMinimize = () => {
-    if (api?.windowMinimize) api.windowMinimize();
+    getCurrentWindow().minimize();
   };
   const handleMaximize = () => {
-    if (api?.windowMaximize) api.windowMaximize();
+    getCurrentWindow().toggleMaximize();
   };
 </script>
 
-<div class="title-bar" data-testid="title-bar" role="toolbar" aria-label="Window controls">
+<div
+  class="title-bar"
+  data-testid="title-bar"
+  data-tauri-drag-region
+  role="toolbar"
+  aria-label="Window controls"
+>
   <div class="traffic-light-group">
-    <button class="traffic-dot dot-red" onclick={handleClose} data-testid="btn-close" aria-label="Close">
+    <button
+      class="traffic-dot dot-red"
+      onclick={handleClose}
+      data-testid="btn-close"
+      aria-label="Close"
+    >
       <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true">
         <line x1="3" y1="3" x2="7" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         <line x1="7" y1="3" x2="3" y2="7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
       </svg>
     </button>
-    <button class="traffic-dot dot-yellow" onclick={handleMinimize} data-testid="btn-minimize" aria-label="Minimize">
+    <button
+      class="traffic-dot dot-yellow"
+      onclick={handleMinimize}
+      data-testid="btn-minimize"
+      aria-label="Minimize"
+    >
       <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true">
         <line x1="2.5" y1="5" x2="7.5" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
       </svg>
     </button>
-    <button class="traffic-dot dot-green" onclick={handleMaximize} data-testid="btn-maximize" aria-label="Maximize">
+    <button
+      class="traffic-dot dot-green"
+      onclick={handleMaximize}
+      data-testid="btn-maximize"
+      aria-label="Maximize"
+    >
       <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true">
         <line x1="5" y1="2.5" x2="5" y2="7.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         <line x1="2.5" y1="5" x2="7.5" y2="5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
