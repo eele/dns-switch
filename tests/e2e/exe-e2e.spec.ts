@@ -52,6 +52,44 @@ function getRealDns(adapterIndex: number): string[] {
   );
 }
 
+/**
+ * Determine whether the adapter's DNS is set to "Automatic (DHCP)" by
+ * checking the registry, mirroring the Rust backend logic.
+ * A `NameServer` registry value means static DNS; its absence means DHCP.
+ */
+function isRealDnsDhcp(adapterIndex: number): boolean {
+  const cmd = `
+$nicIndex = ${adapterIndex};
+$adapter = Get-NetAdapter -Index $nicIndex -ErrorAction SilentlyContinue;
+$adapterName = $adapter.Name;
+$ipAddrs = @(Get-NetIPAddress -InterfaceIndex $nicIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress);
+$isDhcp = $true;
+$tcpIpBase = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\Tcpip\\Parameters\\Interfaces';
+$interfaceKeys = Get-ChildItem -Path $tcpIpBase -ErrorAction SilentlyContinue;
+foreach ($key in $interfaceKeys) {
+  $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue;
+  $match = $false;
+  if ($adapterName -and $props.Name -eq $adapterName) { $match = $true }
+  if (-not $match) {
+    $keyIps = @();
+    if ($props.IPAddress) { $keyIps = @($props.IPAddress) }
+    foreach ($ip in $keyIps) { if ($ipAddrs -contains $ip) { $match = $true; break } }
+  }
+  if ($match) {
+    $ns = $props.NameServer;
+    if ($ns -and $ns -ne '') { $isDhcp = $false }
+    break;
+  }
+}
+if ($isDhcp) { 'True' } else { 'False' }
+`;
+  try {
+    return runPs(cmd).trim() === "True";
+  } catch {
+    return true; // default to DHCP if we can't determine
+  }
+}
+
 function isElevated(): boolean {
   try {
     const out = runPs(
@@ -174,20 +212,27 @@ test("Current DNS shows the real DNS of the selected adapter", async () => {
   const currentDns = page.locator("[data-testid='current-dns']");
 
   // Find an adapter that actually has IPv4 DNS servers; prefer it for a
-  // stronger assertion, fall back to any adapter (then expect Automatic).
+  // stronger assertion, fall back to any adapter.
   const withDns = realAdapters.find((a) => getRealDns(a.index).length > 0);
   const target = withDns ?? realAdapters[0];
 
   await select.selectOption(target.name);
 
-  const servers = getRealDns(target.index);
-  if (servers.length > 0) {
-    await expect(currentDns).toContainText(servers[0], { timeout: 30000 });
-    if (servers.length > 1) {
-      await expect(currentDns).toContainText(servers[1], { timeout: 5000 });
-    }
-  } else {
+  if (isRealDnsDhcp(target.index)) {
+    // DHCP mode: the app must show "Automatic (DHCP)" regardless of the
+    // actual IPs that were obtained from the DHCP server.
     await expect(currentDns).toContainText("Automatic (DHCP)", { timeout: 30000 });
+  } else {
+    // Static mode: show the specific server addresses
+    const servers = getRealDns(target.index);
+    if (servers.length > 0) {
+      await expect(currentDns).toContainText(servers[0], { timeout: 30000 });
+      if (servers.length > 1) {
+        await expect(currentDns).toContainText(servers[1], { timeout: 5000 });
+      }
+    } else {
+      await expect(currentDns).toContainText("Automatic (DHCP)", { timeout: 30000 });
+    }
   }
 });
 
@@ -201,11 +246,16 @@ test("switching to another real adapter shows that adapter's real DNS", async ()
 
   await select.selectOption(second.name);
   const currentDns = page.locator("[data-testid='current-dns']");
-  const servers = getRealDns(second.index);
-  if (servers.length > 0) {
-    await expect(currentDns).toContainText(servers[0], { timeout: 30000 });
-  } else {
+
+  if (isRealDnsDhcp(second.index)) {
     await expect(currentDns).toContainText("Automatic (DHCP)", { timeout: 30000 });
+  } else {
+    const servers = getRealDns(second.index);
+    if (servers.length > 0) {
+      await expect(currentDns).toContainText(servers[0], { timeout: 30000 });
+    } else {
+      await expect(currentDns).toContainText("Automatic (DHCP)", { timeout: 30000 });
+    }
   }
 });
 

@@ -89,24 +89,65 @@ pub fn list_adapters() -> Result<Vec<Adapter>, String> {
         .collect())
 }
 
-/// Read the current IPv4 DNS servers for the adapter with the given interface index.
+/// Read the current IPv4 DNS servers for the adapter with the given interface
+/// index, and whether the adapter's DNS is set to "Automatic (DHCP)".
+///
+/// `Get-DnsClientServerAddress` returns the *effective* DNS servers even when
+/// they were obtained via DHCP, so an empty list is NOT a reliable indicator of
+/// DHCP mode. Instead we inspect the per-interface TCP/IP registry key:
+/// `HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\{GUID}`.
+/// The `NameServer` value is only present when DNS is configured statically, so
+/// its absence means the adapter is using DHCP (Automatic).
 #[tauri::command]
 pub fn get_current_dns(adapter_index: u32) -> Result<DnsInfo, String> {
     let script = format!(
-        "Get-DnsClientServerAddress -InterfaceIndex {} -AddressFamily IPv4 | Select-Object -Property ServerAddresses | ConvertTo-Json",
+        r#"$nicIndex = {};
+$adapter = Get-NetAdapter -Index $nicIndex -ErrorAction SilentlyContinue;
+$adapterName = $adapter.Name;
+$ipAddrs = @(Get-NetIPAddress -InterfaceIndex $nicIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty IPAddress);
+
+$dnsServers = @();
+$dnsEntries = Get-DnsClientServerAddress -InterfaceIndex $nicIndex -AddressFamily IPv4;
+foreach ($entry in $dnsEntries) {{
+  foreach ($addr in $entry.ServerAddresses) {{
+    if ($addr -ne "") {{ $dnsServers += $addr }}
+  }}
+}}
+
+$isDhcp = $true;
+$tcpIpBase = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces';
+$interfaceKeys = Get-ChildItem -Path $tcpIpBase -ErrorAction SilentlyContinue;
+foreach ($key in $interfaceKeys) {{
+  $props = Get-ItemProperty -Path $key.PSPath -ErrorAction SilentlyContinue;
+  $match = $false;
+  if ($adapterName -and $props.Name -eq $adapterName) {{ $match = $true }}
+  if (-not $match) {{
+    $keyIps = @();
+    if ($props.IPAddress) {{ $keyIps = @($props.IPAddress) }}
+    foreach ($ip in $keyIps) {{ if ($ipAddrs -contains $ip) {{ $match = $true; break }} }}
+  }}
+  if ($match) {{
+    $ns = $props.NameServer;
+    if ($ns -and $ns -ne "") {{ $isDhcp = $false }}
+    break;
+  }}
+}}
+
+@{{ servers = $dnsServers; isDhcp = $isDhcp }} | ConvertTo-Json -Compress"#,
         adapter_index
     );
     let out = run_ps(&script)?;
-    let rows = parse_json_array(&out);
+    let json: serde_json::Value = serde_json::from_str(out.trim())
+        .map_err(|e| format!("Failed to parse DNS info JSON: {e}"))?;
+
+    let is_dhcp = json.get("isDhcp").and_then(|v| v.as_bool()).unwrap_or(true);
 
     let mut servers: Vec<String> = Vec::new();
-    for row in &rows {
-        if let Some(arr) = row.get("ServerAddresses").and_then(|v| v.as_array()) {
-            for item in arr {
-                if let Some(s) = item.as_str() {
-                    if !s.is_empty() {
-                        servers.push(s.to_string());
-                    }
+    if let Some(arr) = json.get("servers").and_then(|v| v.as_array()) {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                if !s.is_empty() {
+                    servers.push(s.to_string());
                 }
             }
         }
@@ -115,7 +156,7 @@ pub fn get_current_dns(adapter_index: u32) -> Result<DnsInfo, String> {
     Ok(DnsInfo {
         primary: servers.first().cloned().unwrap_or_default(),
         secondary: servers.get(1).cloned().unwrap_or_default(),
-        is_dhcp: servers.is_empty(),
+        is_dhcp,
     })
 }
 
