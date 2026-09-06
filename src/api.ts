@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Adapter, DnsGroup, DnsInfo } from "./types";
+import type { Adapter, DnsGroup, DnsInfo, AppConfig } from "./types";
 
 /**
  * API layer – talks to the Tauri Rust backend via `invoke`.
@@ -22,6 +22,20 @@ const MOCK_CURRENT_DNS: Record<string, DnsInfo> = {
   Ethernet: { primary: "8.8.8.8", secondary: "8.8.4.4", isDhcp: false },
   "Bluetooth Network": { primary: "", secondary: "", isDhcp: true },
 };
+
+const MOCK_CONFIG_KEY = "dns_switch_config";
+
+function defaultConfig(): AppConfig {
+  return {
+    dns_groups: [
+      { name: "AliDNS", primary: "223.5.5.5", secondary: "223.6.6.6" },
+      { name: "Google DNS", primary: "8.8.8.8", secondary: "8.8.4.4" },
+      { name: "DNSPod", primary: "1.12.12.12", secondary: "1.12.0.0" },
+    ],
+    last_adapter: null,
+    selected_group: "",
+  };
+}
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -70,6 +84,29 @@ export async function resetDnsToDhcp(adapterIndex: number): Promise<void> {
   const name = mockAdapterNameByIndex(adapterIndex);
   if (!name) return;
   MOCK_CURRENT_DNS[name] = { primary: "", secondary: "", isDhcp: true };
+}
+
+// ── Config persistence ───────────────────────────────────────────
+
+export async function loadConfig(): Promise<AppConfig> {
+  if (isTauri()) return invoke<AppConfig>("load_config");
+  await delay(50);
+  try {
+    const raw = localStorage.getItem(MOCK_CONFIG_KEY);
+    if (raw) return JSON.parse(raw) as AppConfig;
+  } catch { /* corrupt or unavailable — fall back to defaults */ }
+  return defaultConfig();
+}
+
+export async function saveConfig(cfg: AppConfig): Promise<void> {
+  if (isTauri()) {
+    await invoke("save_config", { config: cfg });
+    return;
+  }
+  await delay(50);
+  try {
+    localStorage.setItem(MOCK_CONFIG_KEY, JSON.stringify(cfg));
+  } catch { /* best-effort in browser fallback */ }
 }
 
 // ── Validation helpers ──────────────────────────────────────────

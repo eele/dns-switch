@@ -3,6 +3,7 @@
 
 mod admin;
 mod commands;
+mod config;
 
 /// On Windows 11, the DWM automatically rounds window corners.
 /// We disable this so CSS border-radius is the single source of truth,
@@ -38,7 +39,9 @@ fn main() {
             commands::list_adapters,
             commands::get_current_dns,
             commands::set_dns,
-            commands::reset_dns_to_dhcp
+            commands::reset_dns_to_dhcp,
+            config::load_config,
+            config::save_config
         ])
         .setup(|app| {
             #[cfg(target_os = "windows")]

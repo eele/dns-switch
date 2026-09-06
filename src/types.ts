@@ -14,3 +14,10 @@ export interface DnsGroup {
   primary: string;
   secondary: string;
 }
+
+/** Persisted application configuration (snake_case matches the on-disk JSON). */
+export interface AppConfig {
+  dns_groups: DnsGroup[];
+  last_adapter: string | null;
+  selected_group: string;
+}

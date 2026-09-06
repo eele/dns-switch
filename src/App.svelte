@@ -8,6 +8,8 @@
     getCurrentDns,
     setDns,
     resetDnsToDhcp,
+    loadConfig,
+    saveConfig,
   } from "./api";
   import type { Adapter, DnsGroup, DnsInfo } from "./types";
 
@@ -15,16 +17,26 @@
   let adapters = $state<Adapter[]>([]);
   let selectedAdapter = $state("");
   let currentDns = $state<DnsInfo>({ primary: "", secondary: "", isDhcp: true });
-  let dnsGroups = $state<DnsGroup[]>([
-    { name: "AliDNS", primary: "223.5.5.5", secondary: "223.6.6.6" },
-    { name: "Google DNS", primary: "8.8.8.8", secondary: "8.8.4.4" },
-    { name: "DNSPod", primary: "1.12.12.12", secondary: "1.12.0.0" },
-  ]);
+  let dnsGroups = $state<DnsGroup[]>([]);
   let selectedGroup = $state("");
   let statusText = $state("Loading…");
   let statusClass = $state("loading");
   let editingGroup = $state("");
   let adaptersLoaded = $state(false);
+  let configLoaded = $state(false);
+
+  /** Persist the whole config (groups + last adapter + last selected group). */
+  async function persistConfig() {
+    try {
+      await saveConfig({
+        dns_groups: dnsGroups,
+        last_adapter: selectedAdapter ? selectedAdapter : null,
+        selected_group: selectedGroup,
+      });
+    } catch {
+      // Persistence failure is non-fatal; keep working in memory.
+    }
+  }
 
   // Context menu state
   let ctxVisible = $state(false);
@@ -67,10 +79,30 @@
   // ── Init ───────────────────────────────────────────────────
   async function init() {
     try {
+      // 1. Load persisted config (groups + last used adapter).
+      const cfg = await loadConfig();
+      if (Array.isArray(cfg.dns_groups)) {
+        dnsGroups = cfg.dns_groups.filter(
+          (g) => g && typeof g.name === "string" && g.name.trim() !== ""
+        );
+      }
+      if (dnsGroups.length === 0) {
+        dnsGroups = [
+          { name: "AliDNS", primary: "223.5.5.5", secondary: "223.6.6.6" },
+          { name: "Google DNS", primary: "8.8.8.8", secondary: "8.8.4.4" },
+          { name: "DNSPod", primary: "1.12.12.12", secondary: "1.12.0.0" },
+        ];
+      }
+      const lastAdapter = cfg.last_adapter ?? "";
+      configLoaded = true;
+
+      // 2. List adapters; restore the last used adapter if it still exists,
+      //    otherwise fall back to the first one.
       const list = await listAdapters();
       adapters = list;
       if (list.length > 0) {
-        selectedAdapter = list[0].name;
+        const restored = list.find((a) => a.name === lastAdapter);
+        selectedAdapter = restored ? restored.name : list[0].name;
         await loadDns();
       }
       adaptersLoaded = true;
@@ -111,6 +143,7 @@
   // ── Event handlers ─────────────────────────────────────────
   async function onAdapterChange() {
     await loadDns();
+    persistConfig(); // record the newly selected adapter as last_adapter
   }
 
   async function onRefresh() {
@@ -123,6 +156,7 @@
       }
       await loadDns();
       setStatus("Adapters refreshed.");
+      persistConfig();
     } catch {
       setStatus("Failed to refresh.", "error");
     }
@@ -202,6 +236,7 @@
     }
     editingGroup = "";
     setStatus(`Group "${trimmedName}" saved.`, "success");
+    persistConfig();
   }
 
   function onAdd() {
@@ -209,6 +244,7 @@
     dnsGroups = [...dnsGroups, newGroup];
     editingGroup = newGroup.name;
     setStatus(`Added "${newGroup.name}". Edit and save to set addresses.`);
+    persistConfig();
   }
 
   function onDelete(name: string) {
@@ -225,6 +261,7 @@
     confirmVisible = false;
     confirmGroup = "";
     setStatus(`Deleted "${confirmGroup || "group"}.`, "success");
+    persistConfig();
   }
 
   function onCancelDelete() {
