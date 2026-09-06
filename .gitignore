@@ -39,4 +39,8 @@ Thumbs.db
 # Tauri
 src-tauri/target/
 src-tauri/gen/
+
+# Screenshots / artifacts
+release-screenshot.png
+screenshot.png
 screenshot.png
