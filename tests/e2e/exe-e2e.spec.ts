@@ -115,6 +115,10 @@ test.beforeAll(async () => {
     cwd: PROJECT_ROOT,
     env: {
       ...process.env,
+      // The app now forces UAC elevation on startup; this documented escape
+      // hatch lets the automated runner launch it unprivileged so the UI
+      // tests can run. Elevation-dependent DNS tests gate on isElevated().
+      DNS_SWITCH_ALLOW_NO_ADMIN: "1",
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}`,
     },
     stdio: "pipe",

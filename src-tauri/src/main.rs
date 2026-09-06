@@ -1,6 +1,7 @@
 // Prevents an extra console window on Windows in release builds
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod admin;
 mod commands;
 
 /// On Windows 11, the DWM automatically rounds window corners.
@@ -28,6 +29,10 @@ fn disable_dwm_rounded_corners(hwnd: isize) {
 }
 
 fn main() {
+    // ── Force administrator privileges on Windows ──────────────────────
+    #[cfg(target_os = "windows")]
+    admin::ensure_elevated();
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             commands::list_adapters,
@@ -41,9 +46,10 @@ fn main() {
                 use raw_window_handle::HasWindowHandle;
                 use tauri::Manager;
                 let window = app.get_webview_window("main").expect("main window");
-                let handle = window
-                    .window_handle()
-                    .expect("failed to get window handle");
+                let handle = match window.window_handle() {
+                    Ok(h) => h,
+                    Err(_) => return Ok(()),
+                };
                 if let raw_window_handle::RawWindowHandle::Win32(h) = handle.as_raw() {
                     disable_dwm_rounded_corners(h.hwnd.get());
                 }
