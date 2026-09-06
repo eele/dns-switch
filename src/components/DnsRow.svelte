@@ -1,7 +1,27 @@
 <script lang="ts">
   import type { DnsGroup } from "../types";
 
-  let { group, isDhcp = false, isEditing = false, isSelected = false, onToggle, onEdit, onSave, onDelete, onContext } = $props();
+  let {
+    group,
+    isDhcp = false,
+    isEditing = false,
+    isSelected = false,
+    onToggle,
+    onEdit,
+    onSave,
+    onDelete,
+    onContext,
+  }: {
+    group: DnsGroup;
+    isDhcp?: boolean;
+    isEditing?: boolean;
+    isSelected?: boolean;
+    onToggle: (name: string) => void;
+    onEdit: (name: string) => void;
+    onSave: (name: string, primary: string, secondary: string) => void;
+    onDelete: (name: string) => void;
+    onContext: (e: MouseEvent, addr: string, addrId: string) => void;
+  } = $props();
 
   let editName = $state("");
   let editPrimary = $state("");

@@ -80,14 +80,20 @@
     }
   }
 
-  async function loadDns() {
+  /**
+   * Re-read the selected adapter's real DNS from the system and re-sync the
+   * Current DNS row + radio selection to it. `silent` suppresses the status
+   * flicker when called as part of another operation's error path.
+   */
+  async function loadDns(silent = false) {
     const adapter = adapters.find((a) => a.name === selectedAdapter);
     if (!adapter) return;
-    setStatus("Loading…", "loading");
+    if (!silent) setStatus("Loading…", "loading");
     try {
       const info = await getCurrentDns(adapter.index);
       currentDns = info;
-      // Determine which radio should be checked
+      // Radio selection must reflect the adapter's REAL current DNS:
+      // DHCP/empty → Automatic row; exact match → that group; otherwise none.
       if (info.isDhcp || (!info.primary && !info.secondary)) {
         selectedGroup = "Automatic (DHCP)";
       } else {
@@ -96,9 +102,9 @@
         );
         selectedGroup = match ? match.name : "";
       }
-      setStatus("Ready.");
+      if (!silent) setStatus("Ready.");
     } catch {
-      setStatus("Failed to load DNS.", "error");
+      if (!silent) setStatus("Failed to load DNS.", "error");
     }
   }
 
@@ -125,15 +131,23 @@
   async function onToggleGroup(name: string) {
     const adapter = adapters.find((a) => a.name === selectedAdapter);
     if (!adapter) return;
+    // Ignore re-selecting the group that is already active.
+    if (name === selectedGroup) return;
+
+    // Reflect the user's pick immediately; reverted on failure below so the
+    // radio always mirrors the adapter's real current DNS.
+    selectedGroup = name;
+
     if (name === "Automatic (DHCP)") {
       setStatus(`Applying DHCP to "${selectedAdapter}"…`, "loading");
       try {
         await resetDnsToDhcp(adapter.index);
         currentDns = { primary: "", secondary: "", isDhcp: true };
-        selectedGroup = "Automatic (DHCP)";
         setStatus(`DNS on "${selectedAdapter}" reset to DHCP.`, "success");
       } catch {
-        setStatus("Failed to reset DNS.", "error");
+        // Restore radio + Current DNS to the actual system state.
+        await loadDns(true);
+        setStatus("Failed to reset DNS. No administrator privileges.", "error");
       }
       return;
     }
@@ -145,10 +159,12 @@
     try {
       await setDns(adapter.index, [group.primary, group.secondary]);
       currentDns = { primary: group.primary, secondary: group.secondary, isDhcp: false };
-      selectedGroup = name;
       setStatus(`DNS on "${selectedAdapter}" updated successfully.`, "success");
     } catch {
-      setStatus(`Failed to apply "${name}".`, "error");
+      // Re-sync radio + Current DNS from the (unchanged) system state so the
+      // radio selection does not stay stuck on the group that failed to apply.
+      await loadDns(true);
+      setStatus(`Failed to apply "${name}". No administrator privileges.`, "error");
     }
   }
 

@@ -1,5 +1,15 @@
 <script lang="ts">
-  let { visible = false, message = "", onConfirm, onCancel } = $props();
+  let {
+    visible = false,
+    message = "",
+    onConfirm,
+    onCancel,
+  }: {
+    visible?: boolean;
+    message?: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+  } = $props();
 </script>
 
 {#if visible}

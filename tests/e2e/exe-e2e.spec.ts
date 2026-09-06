@@ -73,9 +73,12 @@ let realAdapterNames: string[] = [];
 test.beforeAll(async () => {
   test.skip(!existsSync(EXE_PATH), `Exe not found at ${EXE_PATH}`);
 
-  appProcess = spawn(EXE_PATH, [`--remote-debugging-port=${CDP_PORT}`], {
+  appProcess = spawn(EXE_PATH, [], {
     cwd: PROJECT_ROOT,
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}`,
+    },
     stdio: "pipe",
     detached: false,
   });

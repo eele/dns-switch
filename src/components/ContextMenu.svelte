@@ -1,5 +1,17 @@
 <script lang="ts">
-  let { visible = false, x = 0, y = 0, address = "", onCopy } = $props();
+  let {
+    visible = false,
+    x = 0,
+    y = 0,
+    address = "",
+    onCopy,
+  }: {
+    visible?: boolean;
+    x?: number;
+    y?: number;
+    address?: string;
+    onCopy: () => void;
+  } = $props();
 
   function clickCopy() {
     onCopy();
