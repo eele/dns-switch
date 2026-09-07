@@ -1,11 +1,16 @@
 // Generates a 1024x1024 source PNG for `tauri icon`.
-// Draws a rounded blue square with a white "DNS switch" glyph (two arrows).
+// Design: light-blue rounded rectangle with a subtle 3D look (top-lit
+// gradient + gloss + soft inner shade) and a large white uppercase "D".
+//
+// Dependency-free: uses a minimal RGBA PNG encoder + software rasterization
+// with supersampled anti-aliasing.
 import { deflateSync } from "node:zlib";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SIZE = 1024;
+const SS = 3; // supersampling factor (SS x SS sub-samples per pixel)
 
 // ── minimal PNG encoder (RGBA, 8-bit) ─────────────────────────
 function crc32(buf) {
@@ -55,59 +60,109 @@ function encodePng(width, height, pixelFn) {
   return Buffer.concat([sig, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
 }
 
-// ── icon drawing ───────────────────────────────────────────────
-const R = 220; // corner radius
-function inRoundedRect(x, y) {
-  // rounded square inset 40..984
-  const m = 40, s = SIZE - 2 * m;
-  if (x < m || x >= m + s || y < m || y >= m + s) return 0;
-  const cx = Math.max(m + R, Math.min(x, m + s - R));
-  const cy = Math.max(m + R, Math.min(y, m + s - R));
-  const dx = x - cx, dy = y - cy;
-  // distance to the rounded-rect boundary region
-  const inSquare = x >= m + R && x <= m + s - R ? true : y >= m + R && y <= m + s - R ? true : false;
-  if (inSquare) return 1;
-  return dx * dx + dy * dy <= R * R ? 1 : 0;
+// ── rounded-rect geometry ──────────────────────────────────────
+const M = 40; // margin (inset)
+const S_ = SIZE - 2 * M; // inner square side
+const RR = 190; // corner radius
+
+function inRoundedRect(px, py) {
+  if (px < M || py < M || px > M + S_ || py > M + S_) return false;
+  const left = px < M + RR;
+  const right = px > M + S_ - RR;
+  const top = py < M + RR;
+  const bottom = py > M + S_ - RR;
+  if ((left || right) && (top || bottom)) {
+    const ccx = left ? M + RR : M + S_ - RR;
+    const ccy = top ? M + RR : M + S_ - RR;
+    const dx = px - ccx, dy = py - ccy;
+    return dx * dx + dy * dy <= RR * RR;
+  }
+  return true;
 }
 
-function drawArrow(x, y, angleDeg, len, thick) {
-  // diamond arrow (two triangles) centered at (x,y)
-  const a = (angleDeg * Math.PI) / 180;
-  const cos = Math.cos(a), sin = Math.sin(a);
-  // local coords: arrow points +x
-  const local = (lx, ly) => [x + lx * cos - ly * sin, y + lx * sin + ly * cos];
-  const tip = local(len / 2, 0);
-  const tailL = local(-len / 2, -thick);
-  const tailR = local(-len / 2, thick);
-  const notch = local(-len / 2 + thick * 0.9, 0);
-  // point-in-polygon (bowtie = two triangles tip-notch-tailL and tip-notch-tailR)
-  const inTri = (p, a1, b, c) => {
-    const sign = (u, v, w) => (u[0] - w[0]) * (v[1] - w[1]) - (v[0] - w[0]) * (u[1] - w[1]);
-    const d1 = sign(p, a1, b), d2 = sign(p, b, c), d3 = sign(p, c, a1);
-    const hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
-    const hasPos = d1 > 0 || d2 > 0 || d3 > 0;
-    return !(hasNeg && hasPos);
-  };
-  const p = [x, y];
-  return inTri(p, tip, notch, tailL) || inTri(p, tip, tailR, notch);
+// ── "D" glyph (geometric bold) ────────────────────────────────
+// Outer silhouette = left stem rectangle + right half of outer ellipse.
+// Counter (hole)   = right half of a smaller inner ellipse.
+const D = {
+  y0: 272, y1: 752, cy: 512, // vertical extent (centered)
+  x0: 320,                   // stem left edge
+  ecx: 445,                  // stem right edge (ellipse left diameter)
+  rxO: 275, ryO: 240,        // outer bowl semi-axes  (outer right = 720)
+  rxI: 160, ryI: 128,        // inner (counter) semi-axes (inner right = 605)
+};
+
+function inD(px, py) {
+  const { y0, y1, cy, x0, ecx, rxO, ryO, rxI, ryI } = D;
+  if (py < y0 || py > y1) return false;
+  const inStem = px >= x0 && px <= ecx;
+  const exo = (px - ecx) / rxO, eyo = (py - cy) / ryO;
+  const inOuterBowl = px >= ecx && exo * exo + eyo * eyo <= 1;
+  if (!(inStem || inOuterBowl)) return false;
+  const exi = (px - ecx) / rxI, eyi = (py - cy) / ryI;
+  const inCounter = px >= ecx && exi * exi + eyi * eyi <= 1;
+  return !inCounter;
+}
+
+// ── sampling / shading helpers ─────────────────────────────────
+function coverage(isInside, x, y) {
+  let n = 0;
+  for (let i = 0; i < SS; i++) {
+    for (let j = 0; j < SS; j++) {
+      if (isInside(x + (i + 0.5) / SS, y + (j + 0.5) / SS)) n++;
+    }
+  }
+  return n / (SS * SS);
+}
+
+const TOP = [173, 216, 245];   // light blue (top)
+const BOT = [96, 158, 214];    // deeper blue (bottom)
+const GLOSS = [255, 255, 255];
+const SHADE = [20, 70, 120];
+const D_SHADOW = [25, 60, 100];
+const SOFF = 14; // "D" drop-shadow offset (down)
+
+function baseColor(py) {
+  const t = (py - M) / S_;
+  return [TOP[0] + (BOT[0] - TOP[0]) * t, TOP[1] + (BOT[1] - TOP[1]) * t, TOP[2] + (BOT[2] - TOP[2]) * t];
+}
+
+function highlightAlpha(py) {
+  const t = (py - M) / S_;
+  if (t >= 0.42) return 0;
+  return 0.4 * (1 - t / 0.42); // soft top gloss
+}
+
+function bottomShadeAlpha(py) {
+  const t = (py - M) / S_;
+  if (t <= 0.8) return 0;
+  return 0.16 * ((t - 0.8) / 0.2); // subtle inner shade at the base
 }
 
 function pixel(x, y) {
-  const rr = inRoundedRect(x, y);
-  if (!rr) return [0, 0, 0, 0];
-  // vertical blue gradient
-  const t = y / SIZE;
-  let r = Math.round(37 + (30 - 37) * t);
-  let g = Math.round(99 + (118 - 99) * t);
-  let b = Math.round(235 + (249 - 235) * t);
-  // white switch arrows
-  const c = SIZE / 2;
-  const inArrow =
-    drawArrow(x, y, 45, 460, 90) || drawArrow(x, y, 225, 460, 90);
-  if (inArrow) {
-    r = 255; g = 255; b = 255;
-  }
-  return [r, g, b, 255];
+  const rectCov = coverage(inRoundedRect, x, y);
+  if (rectCov <= 0) return [0, 0, 0, 0];
+
+  const py = y + 0.5;
+  let [r, g, b] = baseColor(py);
+
+  // top gloss
+  const ha = highlightAlpha(py) * rectCov;
+  r += (GLOSS[0] - r) * ha; g += (GLOSS[1] - g) * ha; b += (GLOSS[2] - b) * ha;
+
+  // bottom inner shade
+  const sa = bottomShadeAlpha(py) * rectCov;
+  r += (SHADE[0] - r) * sa; g += (SHADE[1] - g) * sa; b += (SHADE[2] - b) * sa;
+
+  // "D" drop shadow (only where the letter is NOT present)
+  const dCov = coverage(inD, x, y);
+  const shCov = coverage((px, p) => inD(px, p - SOFF), x, y);
+  const shOnly = Math.max(0, shCov - dCov) * 0.3;
+  r += (D_SHADOW[0] - r) * shOnly; g += (D_SHADOW[1] - g) * shOnly; b += (D_SHADOW[2] - b) * shOnly;
+
+  // "D" (white) on top
+  r += (255 - r) * dCov; g += (255 - g) * dCov; b += (255 - b) * dCov;
+
+  return [Math.round(r), Math.round(g), Math.round(b), Math.round(255 * rectCov)];
 }
 
 const out = encodePng(SIZE, SIZE, pixel);
